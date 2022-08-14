@@ -1264,6 +1264,9 @@ struct ReadOptions {
   // Default: 0 (don't filter by seqnum, return user keys)
   SequenceNumber iter_start_seqnum;
 
+  bool read_handle = 1;
+  bool read_by_handle = 1;
+
   ReadOptions();
   ReadOptions(bool cksum, bool cache);
 };

@@ -93,6 +93,8 @@ class BufferLazyBufferState : public LazyBufferState {
   struct alignas(LazyBufferContext) Context {
     LazyBufferCustomizeBuffer buffer;
     Status status;
+    void* placeholder1;
+    void* placeholder2;
   };
 
   void destroy(LazyBuffer* buffer) const override {
@@ -188,6 +190,8 @@ struct StringLazyBufferState : public LazyBufferState {
     std::string* string;
     uint64_t is_owner;
     Status status;
+    void* placeholder1;
+    void* placeholder2;
   };
 
   void destroy(LazyBuffer* buffer) const override {
@@ -364,6 +368,8 @@ Status LazyBufferState::dump_buffer(LazyBuffer* buffer,
   target->state_->assign_slice(target, buffer->slice_);
   assert(target->slice_ == buffer->slice_);
   target->file_number_ = buffer->file_number_;
+  target->block_offset_ = buffer->block_offset_;
+  target->block_size_ = buffer->block_size_;
   destroy(buffer);
   return Status::OK();
 }
@@ -435,14 +441,18 @@ void LazyBuffer::fix_light_state(const LazyBuffer& other) {
 #endif
 
 LazyBuffer::LazyBuffer(size_t _size) noexcept
-    : context_{}, file_number_(uint64_t(-1)) {
+    : context_{}, file_number_(uint64_t(-1)),
+      block_offset_(uint64_t(-1)),
+      block_size_(uint64_t(-1)) {
   LazyBufferState::reserve_buffer(this, _size);
 }
 
 LazyBuffer::LazyBuffer(const SliceParts& _slice_parts, uint64_t _file_number)
     : state_(LazyBufferState::light_state()),
       context_{},
-      file_number_(_file_number) {
+      file_number_(_file_number),
+      block_offset_(uint64_t(-1)),
+      block_size_(uint64_t(-1)) {
   size_t size = 0;
   for (int i = 0; i < _slice_parts.num_parts; ++i) {
     size += _slice_parts.parts[i].size();
@@ -460,7 +470,9 @@ LazyBuffer::LazyBuffer(LazyBufferCustomizeBuffer _buffer) noexcept
     : state_(LazyBufferState::buffer_state()),
       context_{reinterpret_cast<uint64_t>(_buffer.handle),
                reinterpret_cast<uint64_t>(_buffer.uninitialized_resize)},
-      file_number_(uint64_t(-1)) {
+      file_number_(uint64_t(-1)),
+      block_offset_(uint64_t(-1)),
+      block_size_(uint64_t(-1)) {
   assert(_buffer.handle != nullptr);
   assert(_buffer.uninitialized_resize != nullptr);
   ::new (&union_cast<BufferLazyBufferState::Context>(&context_)->status) Status;
@@ -470,7 +482,9 @@ LazyBuffer::LazyBuffer(std::string* _string) noexcept
     : slice_(*_string),
       state_(LazyBufferState::string_state()),
       context_{reinterpret_cast<uint64_t>(_string)},
-      file_number_(uint64_t(-1)) {
+      file_number_(uint64_t(-1)),
+      block_offset_(uint64_t(-1)),
+      block_size_(uint64_t(-1)) {
   assert(_string != nullptr);
   ::new (&union_cast<StringLazyBufferState::Context>(&context_)->status) Status;
 }
@@ -479,7 +493,8 @@ LazyBuffer::LazyBuffer(std::string* _string) noexcept
 #pragma GCC diagnostic pop
 #endif
 
-void LazyBuffer::reset(const SliceParts& _slice_parts, uint64_t _file_number) {
+void LazyBuffer::reset(const SliceParts& _slice_parts, uint64_t _file_number,
+                       uint64_t _block_offset, uint64_t _block_size) {
   destroy();
   size_t size = 0;
   for (int i = 0; i < _slice_parts.num_parts; ++i) {
@@ -492,8 +507,12 @@ void LazyBuffer::reset(const SliceParts& _slice_parts, uint64_t _file_number) {
       dst += _slice_parts.parts[i].size();
     }
     file_number_ = _file_number;
+    block_offset_ = _block_offset;
+    block_size_ = _block_size;
   } else {
     file_number_ = uint64_t(-1);
+    block_offset_ = uint64_t(-1);
+    block_size_ = uint64_t(-1);
   }
 }
 
@@ -507,6 +526,8 @@ void LazyBuffer::reset(LazyBufferCustomizeBuffer _buffer) {
   ::new (&context->status) Status;
   slice_ = Slice();
   file_number_ = uint64_t(-1);
+  block_offset_ = uint64_t(-1);
+  block_size_ = uint64_t(-1);
 }
 
 void LazyBuffer::reset(std::string* _string) {
@@ -531,6 +552,8 @@ void LazyBuffer::reset(std::string* _string) {
   }
   slice_ = *context->string;
   file_number_ = uint64_t(-1);
+  block_offset_ = uint64_t(-1);
+  block_size_ = uint64_t(-1);
 }
 
 void LazyBuffer::assign(const LazyBuffer& source) {
@@ -546,6 +569,8 @@ void LazyBuffer::assign(const LazyBuffer& source) {
 LazyBufferBuilder* LazyBuffer::get_builder() {
   assert(state_ != nullptr);
   file_number_ = uint64_t(-1);
+  block_offset_ = uint64_t(-1);
+  block_size_ = uint64_t(-1);
   auto s = state_->fetch_buffer(this);
   if (s.ok()) {
     state_->uninitialized_resize(this, size_);
@@ -558,6 +583,8 @@ LazyBufferBuilder* LazyBuffer::get_builder() {
 std::string* LazyBuffer::trans_to_string() {
   assert(state_ != nullptr);
   file_number_ = uint64_t(-1);
+  block_offset_ = uint64_t(-1);
+  block_size_ = uint64_t(-1);
   if (state_ == LazyBufferState::string_state()) {
     auto context = union_cast<StringLazyBufferState::Context>(&context_);
     assert(!slice_.valid() || (data_ == context->string->data() &&

@@ -62,6 +62,7 @@ GetContext::GetContext(const Comparator* ucmp,
     *seq_ = kMaxSequenceNumber;
   }
   sample_ = should_sample_file_read();
+  SaveBlockHandle(lazy_val->block_offset(), lazy_val->block_size());
 }
 
 // Called from TableCache::Get and Table::Get when file/block in which

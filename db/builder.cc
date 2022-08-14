@@ -174,7 +174,8 @@ Status BuildTable(
                              const Slice& meta, bool is_merge,
                              bool is_index) override {
         return SeparateHelper::TransToSeparate(
-            internal_key, value, value.file_number(), meta, is_merge, is_index,
+            internal_key, value, value.file_number(), value.block_offset(),
+            value.block_size(), meta, is_merge, is_index,
             value_meta_extractor.get());
       }
 
@@ -236,6 +237,8 @@ Status BuildTable(
 
     auto trans_to_separate = [&](const Slice& key, LazyBuffer& value) {
       assert(value.file_number() == uint64_t(-1));
+      assert(value.block_offset() == uint64_t(-1));
+      assert(value.block_size() == uint64_t(-1));
       Status status;
       TableBuilder* blob_builder = separate_helper.builder.get();
       FileMetaData* blob_meta = separate_helper.current_output;
@@ -287,14 +290,18 @@ Status BuildTable(
         blob_builder = separate_helper.builder.get();
       }
       if (status.ok()) {
+        // value.set_should_flush(true);
         status = blob_builder->Add(key, value);
       }
       if (status.ok()) {
         blob_meta->UpdateBoundaries(key, GetInternalKeySeqno(key));
+        // TODO wangyi.ywq@bytedance.com
+        // use blobbuilder's current block_offset to replace -1
+        // should wait blob flush
         status = SeparateHelper::TransToSeparate(
-            key, value, blob_meta->fd.GetNumber(), Slice(),
-            GetInternalKeyType(key) == kTypeMerge, false,
-            separate_helper.value_meta_extractor.get());
+            key, value, blob_meta->fd.GetNumber(), value.block_offset(),
+            value.block_size(), Slice(), GetInternalKeyType(key) == kTypeMerge,
+            false, separate_helper.value_meta_extractor.get());
       }
       return status;
     };
