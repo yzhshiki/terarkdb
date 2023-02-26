@@ -37,7 +37,7 @@ struct GetContextStats {
   uint64_t num_cache_filter_add = 0;
   uint64_t num_cache_filter_bytes_insert = 0;
 };
-
+// 维护查找过程的上下文，各级别查找返回后通过此类做判断
 class GetContext {
  public:
   enum GetState {
@@ -74,6 +74,7 @@ class GetContext {
     value_handle_.set_size(block_size);
   };
   BlockHandle GetBlockHandle(){
+    SaveBlockHandle(lazy_val_->block_offset(), lazy_val_->block_size());
     return value_handle_;
   }
 

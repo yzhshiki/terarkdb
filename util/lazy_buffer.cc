@@ -398,7 +398,7 @@ const LazyBufferState* LazyBufferState::cleanable_state() {
   static CleanableLazyBufferState static_state;
   return &static_state;
 }
-
+// 如果context放得下size，则就用context来装data_，否则分配新空间，并让context内的一个指针和data_都指向新空间。
 bool LazyBufferState::reserve_buffer(LazyBuffer* buffer, size_t size) {
   if (size <= sizeof(LazyBufferContext)) {
     buffer->state_ = light_state();

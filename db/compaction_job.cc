@@ -146,6 +146,7 @@ const char* GetCompactionReasonString(CompactionReason compaction_reason) {
   }
 }
 
+// subcompaction是为了L0的compaction并行做出的设计，切割了compaction的key range
 // Maintains state for each sub-compaction
 struct CompactionJob::SubcompactionState {
   const Compaction* compaction;
@@ -1580,6 +1581,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
       snapshot_checker_, compact_->compaction->level(),
       db_options_.statistics.get(), shutting_down_);
 
+  // TODO yzh 这里的transtoseparate 何时调用？相比builder.cc里的167行
   struct BuilderSeparateHelper : public SeparateHelper {
     SeparateHelper* separate_helper = nullptr;
     std::unique_ptr<ValueExtractor> value_meta_extractor;

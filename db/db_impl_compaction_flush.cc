@@ -2110,7 +2110,7 @@ void DBImpl::UnscheduleCallback(void* arg) {
   }
   TEST_SYNC_POINT("DBImpl::UnscheduleCallback");
 }
-
+// 在 flush_req 中找到一个 column family 然后刷新它的 memtable 到磁盘。
 Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
                                LogBuffer* log_buffer, FlushReason* reason) {
   mutex_.AssertHeld();
@@ -2615,7 +2615,7 @@ Status DBImpl::BackgroundCompaction(bool* made_progress,
       return Status::OK();
     }
 
-    // cfd is referenced here
+    // cfd is referenced here 从compaction_queue_队列中读取第一个需要compact的column family.
     auto cfd = PopFirstFromCompactionQueue();
     cf_name = cfd->GetName();
     // We unreference here because the following code will take a Ref() on
@@ -2950,7 +2950,7 @@ Status DBImpl::BackgroundGarbageCollection(bool* made_progress,
   bool sfm_reserved_compact_space = false;
   std::string cf_name = "(null)";
   if (!garbage_collection_queue_.empty()) {
-    // cfd is referenced here
+    // cfd is referenced here 取出需要GC的cfd
     auto cfd = PopFirstFromGarbageCollectionQueue();
     cf_name = cfd->GetName();
     // We unreference here because the following code will take a Ref() on

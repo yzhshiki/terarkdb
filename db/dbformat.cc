@@ -199,6 +199,7 @@ void IterKey::EnlargeBuffer(size_t key_size) {
 }
 // TODO wangyi.ywq@bytedance.com
 // how to implement decode metedata
+// TODO yzh 这里的TransToSeparate是做实际的value修改工作的地方。
 Status SeparateHelper::TransToSeparate(
     const Slice& internal_key, LazyBuffer& value, uint64_t file_number,
     uint64_t block_offset, uint64_t block_size, const Slice& meta,
@@ -207,16 +208,19 @@ Status SeparateHelper::TransToSeparate(
 //   no need to judge offset and size now. we may not do flush before here.
 //   assert(block_offset != uint64_t(-1));
 //   assert(block_size != uint64_t(-1));
+// 此处先把fileno等字符编码，然后写给value
   if (value_meta_extractor == nullptr || is_merge) {
     value.reset(EncodeFileNumber(file_number), EncodeUint64(block_offset), EncodeUint64(block_size), 
                 true, file_number, block_offset, block_size);
     return Status::OK();
   }
+  // TODO yzh 这里干啥的，貌似fill, read没用到，可能是因为关了compaction
   if (is_index) {
     // (TODO) yangzhehua : should encode these three into one, like EncodeValueHandle
     Slice parts[] = {EncodeFileNumber(file_number),
                      EncodeFileNumber(block_offset),
                      EncodeFileNumber(block_size), meta};
+    // 
     value.reset(SliceParts(parts, 4), file_number, block_offset, block_size);
     return Status::OK();
   } else {

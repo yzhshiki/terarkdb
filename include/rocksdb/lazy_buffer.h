@@ -31,6 +31,7 @@ enum class LazyBufferPinLevel {
   DB,        // detach life cycle from SuperVersion, still depend DB
 };
 
+// 前四：user_key | user_key_size | sequence | DependenceMap::value_type*
 struct LazyBufferContext {
   uint64_t data[6];
 };
@@ -531,12 +532,14 @@ inline void LazyBuffer::reset(const Slice& _slice, bool _copy,
   block_size_ = _block_size;
 }
 
+// TODO yzh 为什么offset和size要被memcpy，而fileno不用？
+// 应该关乎lazybuffer的使用，可以吹一波lazybuffer设计
 inline void LazyBuffer::reset(const Slice& _slice, const Slice& offset_slice, const Slice& size_slice,
                               bool _copy, uint64_t _file_number,
                               uint64_t _block_offset, uint64_t _block_size) {
   assert(_slice.valid());
   if (_copy) {
-    state_->assign_slice(this, _slice);
+    state_->assign_slice(this, _slice); // 此处将fileno的slice直接复制到了lazybuffercontext头部，说明context的值第一个是fileno，与原总结不服，可能会变化。
     assert(slice_ == _slice);
   } else {
     destroy();
@@ -545,7 +548,7 @@ inline void LazyBuffer::reset(const Slice& _slice, const Slice& offset_slice, co
   }
   file_number_ = _file_number;
   memcpy(this->data_ + 4 * _slice.size(), offset_slice.data(), offset_slice.size());
-  memcpy(this->data_ + 5 * _slice.size(), size_slice.data(), size_slice.size());
+  memcpy(this->data_ + 4 * _slice.size() + offset_slice.size(), size_slice.data(), size_slice.size());
   block_offset_ = _block_offset;
   block_size_ = _block_size;
 }

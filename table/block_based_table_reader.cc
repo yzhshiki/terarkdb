@@ -2400,7 +2400,7 @@ bool BlockBasedTable::FullFilterKeyMayMatch(
   }
   return may_match;
 }
-
+// TODO yzh 具体是怎样用filter、index并最终取得指定data block的
 Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,
@@ -2417,7 +2417,7 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
   FilterBlockReader* filter = filter_entry.value;
 
   // First check the full filter
-  // If full filter not useful, Then go into each block
+  // If full filter not useful, Then go into each block 用filter block进行过滤判断
   if (!FullFilterKeyMayMatch(read_options, filter, key, no_io,
                              prefix_extractor)) {
     RecordTick(rep_->ioptions.statistics, BLOOM_FILTER_USEFUL);
@@ -2465,11 +2465,11 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
         static LazyBufferStateImpl static_state;
 
 
-    // if we've got fileno and block_handle,  try to skip the index block
+    // if we've got fileno and block_handle,  try to skip the index block // 因为这段代码是SST和Blob共用的，下面循环是Lab1做出的优化，在Blob中使用的体现。
     while (!get_context->HasSeparateHelper()) {
         // -1 means the former blob 
-        if (get_context->GetBlockHandle().offset() != uint64_t(-1)) {
-            BlockHandle handle = get_context->GetBlockHandle();
+        if (get_context->GetBlockHandle().offset() != uint64_t(-1)) { // TODO yzh 如果失效了，要手动置-1吗？在fetch_buffer时置-1，就在调用此函数前
+            BlockHandle handle = get_context->GetBlockHandle(); 
             DataBlockIter biter;
             NewDataBlockIterator<DataBlockIter>(rep_, read_options, handle, &biter,
                                                 false, true /* key_includes_seq */,
@@ -2483,7 +2483,7 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                     s = biter.status();
                     break;
                 }
-
+                // TODO yzh 此处应该不需要了，因为已持有offset
                 bool may_exist = biter.SeekForGet(key);
                 if (!may_exist) {
                     break;
@@ -2518,14 +2518,14 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
         if (iiter != &iiter_on_stack) {
           iiter_unique_ptr.reset(iiter);
         }
-        
+        // 查询index block，iiter->Seek中就用了二分来找到data block
         for (iiter->Seek(key); iiter->Valid() && !done; iiter->Next()) {
             BlockHandle handle = iiter->value();
-            
+            // TODO yzh 这里是必要的吗？还未确定此block要读，不过大概率了。
             if(read_options.read_handle) {
                 get_context->SaveBlockHandle(handle.offset(), handle.size());
             }
-
+            // 看起来有两层filter，一层是对整个SST的，一层是对Block的
             bool not_exist_in_filter =
                 filter != nullptr && filter->IsBlockBased() == true &&
                 !filter->KeyMayMatch(ExtractUserKey(key), prefix_extractor,
@@ -2539,7 +2539,7 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                 PERF_COUNTER_BY_LEVEL_ADD(bloom_filter_useful, 1, rep_->level);
                 break;
             } else {
-                DataBlockIter biter;
+                DataBlockIter biter;  //通过了指定data block的filter检测，正式去取data block
                 NewDataBlockIterator<DataBlockIter>(
                     rep_, read_options, iiter->value(), &biter, false,
                     true /* key_includes_seq */, get_context);
@@ -2556,16 +2556,16 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                     s = biter.status();
                     break;
                 }
-
+                // 下面是在data block中给biter用二分找到合适的restart point，来作为查询起点
                 bool may_exist = biter.SeekForGet(key);
-                if (!may_exist) {
+                if (!may_exist) { //
                     // HashSeek cannot find the key this block and the the iter is not
                     // the end of the block, i.e. cannot be in the following blocks
                     // either. In this case, the seek_key cannot be found, so we break
                     // from the top level for-loop.
                     break;
                 }
-
+                // 在data block内部遍历
                 // Call the *saver function on each entry/block until it returns false
                 for (; biter.Valid(); biter.Next()) {
                     ParsedInternalKey parsed_key;

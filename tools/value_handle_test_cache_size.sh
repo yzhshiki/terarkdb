@@ -1,48 +1,34 @@
 # REQUIRE: ProjectRootPath/build
-rm -r tmp
-./db_bench --benchmarks="fillseq,stats" --statistics --blob_size=1024 \
- --value_size=16000 --db=./tmp --num=100000 --disable_auto_compactions=true
- 
-./db_bench --benchmarks="readrandom" --statistics --blob_size=1024 \
- --db=./tmp --use_existing_db=true \
+db_path = "./test_db2"
+rm -r $db_path
+# sudo dd if=/dev/zero of=$db_path bs=4M status=progress
+
+./db_bench --benchmarks="fillseq,stats" --statistics --db="./test_db2" \
+--disable_auto_compactions=false \
+--blob_size=1024  --value_size=160 --num=1000000 --histogram=1
+
+# perf record -e cycles:u -g --call-graph dwarf -F 1000 \
+./db_bench --benchmarks="readrandom" --statistics  \
+ --db=$db_path --use_existing_db=true \
  --use_direct_reads=true --mmap_read=false \
  --cache_index_and_filter_blocks=true \
- --disable_auto_compactions=true \
- --value_size=16000  --num=100000 --cache_size=160000 --duration=0 \
+ --disable_auto_compactions=false \
+ --blob_size=1024 --value_size=160 --num=10000 --cache_size=1600000 \
+ --duration=0 \
  --threads=1 >> a_value_handle_cache_size_result.txt
 
- ./db_bench --benchmarks="readrandom" --statistics --blob_size=1024 \
- --db=./tmp --use_existing_db=true \
- --use_direct_reads=true --mmap_read=false \
- --cache_index_and_filter_blocks=true \
- --disable_auto_compactions=true \
- --value_size=16000  --num=100000 --cache_size=1600000 --duration=0 \
- --threads=1 >> a_value_handle_cache_size_result.txt
+ # for gdb
+#  gdb --args ./db_bench --benchmarks="readrandom" --statistics  \
+#  --db=$db_path --use_existing_db=true \
+#  --use_direct_reads=true --mmap_read=false \
+#  --cache_index_and_filter_blocks=true \
+#  --disable_auto_compactions=true \
+#  --blob_size=1024 --value_size=16000 --num=10000 --cache_size=1600000 \
+#  --duration=0 \
+#  --threads=1
 
- ./db_bench --benchmarks="readrandom" --statistics --blob_size=1024 \
- --db=./tmp --use_existing_db=true \
- --use_direct_reads=true --mmap_read=false \
- --cache_index_and_filter_blocks=true \
- --disable_auto_compactions=true \
- --value_size=16000  --num=100000 --cache_size=16000000 --duration=0 \
- --threads=1 >> a_value_handle_cache_size_result.txt
-
- ./db_bench --benchmarks="readrandom" --statistics --blob_size=1024 \
- --db=./tmp --use_existing_db=true \
- --use_direct_reads=true --mmap_read=false \
- --cache_index_and_filter_blocks=true \
- --disable_auto_compactions=true \
- --value_size=16000  --num=100000 --cache_size=160000000 --duration=0 \
- --threads=1 >> a_value_handle_cache_size_result.txt
-
- ./db_bench --benchmarks="readrandom" --statistics --blob_size=1024 \
- --db=./tmp --use_existing_db=true \
- --use_direct_reads=true --mmap_read=false \
- --cache_index_and_filter_blocks=true \
- --disable_auto_compactions=true \
- --value_size=16000  --num=100000 --cache_size=160000000 --duration=0 \
- --threads=11 >> a_value_handle_cache_size_result.txt
-
-
+# perf report -g --no-children >> a_value_handle_cache_size_perf_nochild.txt
+# perf report -g --percent-limit 10 >> a_value_handle_cache_size_perf_limit.txt
+# perf report -g -n 10 >> a_value_handle_cache_size_perf_n.txt
 # data_size = 16k * 100K = 1.6G
 # cache_size = 0.16, 1.6, 16, 160, 1600M!

@@ -2086,8 +2086,8 @@ Status DBImpl::GetImpl(const ReadOptions& read_options,
 
   bool skip_memtable = (read_options.read_tier == kPersistedTier &&
                         has_unpersisted_data_.load(std::memory_order_relaxed));
-  bool done = false;
-  if (!skip_memtable) {
+  bool done = false; 
+  if (!skip_memtable) { // 在这里就会利用super vision来获取memtable、immutable、version，首先查memtable和immutable，没查到才会进入version->get流程
     if (sv->mem->Get(lkey, lazy_val, &s, &merge_context,
                      &max_covering_tombstone_seq, read_options, callback)) {
       done = true;

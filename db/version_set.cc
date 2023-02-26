@@ -133,7 +133,7 @@ class FilePicker {
     // Setup member variables to search first level.
     search_ended_ = !PrepareNextLevel();
     if (!search_ended_) {
-      // Prefetch Level 0 table data to avoid cache miss if possible.
+      // Prefetch Level 0 table data to avoid cache miss if possible. 准备从硬盘中找key，则先把L0的各SST元数据准备好？
       for (unsigned int i = 0; i < (*level_files_brief_)[0].num_files; ++i) {
         auto* r = (*level_files_brief_)[0].files[i].fd.table_reader;
         if (r) {
@@ -145,10 +145,10 @@ class FilePicker {
 
   int GetCurrentLevel() const { return curr_level_; }
 
-  FdWithKeyRange* GetNextFile() {
-    while (!search_ended_) {  // Loops over different levels.
-      while (curr_index_in_curr_level_ < curr_file_level_->num_files) {
-        // Loops over all files in current level.
+  FdWithKeyRange* GetNextFile() { // 从当前层开始，找到下一个可能存在指定key的SST（仅检查各SST最大最小值）
+    while (!search_ended_) {  // Loops over different levels. 循环每一层
+      while (curr_index_in_curr_level_ < curr_file_level_->num_files) { // 循环当层所有文件
+        // Loops over all files in current level. 
         FdWithKeyRange* f = &curr_file_level_->files[curr_index_in_curr_level_];
         hit_file_level_ = curr_level_;
         is_hit_file_last_in_level_ =
@@ -266,7 +266,7 @@ class FilePicker {
 
   // Setup local variables to search next level.
   // Returns false if there are no more levels to search.
-  bool PrepareNextLevel() {
+  bool PrepareNextLevel() { // 下一层是第0层，则直接返回0，让外层从L0的第0个文件查找；非L0则用二分找到lower bound，让外层从结果文件查找
     curr_level_++;
     while (curr_level_ < num_levels_) {
       curr_file_level_ = &(*level_files_brief_)[curr_level_];
@@ -1274,15 +1274,20 @@ Version::Version(ColumnFamilyData* column_family_data, VersionSet* vset,
       mutable_cf_options_(mutable_cf_options),
       version_number_(version_number) {}
 
+// yzh 读流程中，对kv分离的value，已取到其Blobno、offset（不一定有效），此函数利用这些信息，再做一次table_cache->get以拿到真正的value
 Status Version::fetch_buffer(LazyBuffer* buffer) const {
   auto context = get_context(buffer);
   Slice user_key(reinterpret_cast<const char*>(context->data[0]),
                  context->data[1]);
   uint64_t sequence = context->data[2];
+  // pair格式： std::pair<uint64_t, FileMetaData*>
+  // 下面判断SST中value handle是否有效，说明已进入kv分离流程
+  // TODO yzh 何时进入？
   auto pair = *reinterpret_cast<DependenceMap::value_type*>(context->data[3]);
   if (pair.second->fd.GetNumber() != pair.first) {
     RecordTick(db_statistics_, READ_BLOB_INVALID);
     // tell TableReader that you need to load index block
+    // TODO yzh 因为失效了，之后去取Blob时设为-1，表示不知道offset和size，用在BlockBasedTable::Get里面，使其不跳过Blob的index block
     buffer->set_block_handle(uint64_t(-1), uint64_t(-1));
   } else {
     RecordTick(db_statistics_, READ_BLOB_VALID);
@@ -1292,13 +1297,10 @@ Status Version::fetch_buffer(LazyBuffer* buffer) const {
   GetContext get_context(cfd_->internal_comparator().user_comparator(), nullptr,
                          cfd_->ioptions()->info_log, db_statistics_,
                          GetContext::kNotFound, user_key, buffer, &value_found,
-                         nullptr, nullptr, nullptr, env_, &context_seq);
+                         nullptr, nullptr, nullptr, env_, &context_seq); // 倒数第五个参数是，separate helper，这里设为nullptr，使得blockbasedtable get时进入lab1优化流程
   IterKey iter_key;
   iter_key.SetInternalKey(user_key, sequence, kValueTypeForSeek);
-  // TODO wangyi.ywq@bytedance.com
-  // we should store offset information to LazyBuffer context
-  // we need to support Get operation by offset to avoid unnecessary index block
-  // read
+  // 去
   auto s = table_cache_->Get(
       ReadOptions(), *pair.second, storage_info_.dependence_map(),
       iter_key.GetInternalKey(), &get_context,
@@ -1315,7 +1317,7 @@ Status Version::fetch_buffer(LazyBuffer* buffer) const {
       snprintf(buf, sizeof buf,
                "file number = %" PRIu64 "(%" PRIu64 "), sequence = %" PRIu64,
                pair.second->fd.GetNumber(), pair.first, sequence);
-      return Status::Corruption("Separate value missing", buf);
+      return Status::Corruption("Separate valu e missing", buf);
     }
   }
   assert(buffer->file_number() == pair.second->fd.GetNumber());
@@ -1323,6 +1325,8 @@ Status Version::fetch_buffer(LazyBuffer* buffer) const {
 }
 
 // when compaction, we need to update the newest fileno and offset
+// TODO yzh transtoseperate 发生在写完Blob后写SST时，TransToCombined发生在读SST时，
+// 外部知道SST中value只有fileno信息，所以来获取具体value
 LazyBuffer Version::TransToCombined(const Slice& user_key, uint64_t sequence,
                                     const LazyBuffer& value) const {
   auto s = value.fetch();
@@ -1359,7 +1363,7 @@ LazyBuffer Version::TransToCombined(const Slice& user_key, uint64_t sequence,
     // auto s = table_cache_->Get(
     //     ro, cfd_->internal_comparator(), *find->second,
     //     storage_info_.dependence_map(), iter_key.GetInternalKey(), &get_context,
-    //     mutable_cf_options_.prefix_extractor.get(), nullptr, true);
+    // yzh 这里重新构造了LazyBuffer，将SST中读到的filebo、offset、size封装。不知为何要同时放在context内与外。
     return LazyBuffer(
         this,
         {reinterpret_cast<uint64_t>(user_key.data()), user_key.size(), sequence,
@@ -1369,7 +1373,7 @@ LazyBuffer Version::TransToCombined(const Slice& user_key, uint64_t sequence,
         _block_size);
   }
 }
-
+// 到这是已经查过内存了，现在来硬盘查，取得一个个可能的SST并用table cache查看SST
 void Version::Get(const ReadOptions& read_options, const Slice& user_key,
                   const LookupKey& k, LazyBuffer* value, Status* status,
                   MergeContext* merge_context,
@@ -1389,8 +1393,8 @@ void Version::Get(const ReadOptions& read_options, const Slice& user_key,
       user_comparator(), merge_operator_, info_log_, db_statistics_,
       status->ok() ? GetContext::kNotFound : GetContext::kMerge, user_key,
       value, value_found, merge_context, this, max_covering_tombstone_seq,
-      this->env_, seq, callback);
-
+      this->env_, seq, callback); // 这里的倒数第五个参数，separate helper非空，即blockbasedtable get时不会走lab1优化流程
+  // 下面的level_files_brief里记录了一层的sst数量，及各SST的元信息，可对比range。用autovector来记录多层的brief
   FilePicker fp(
       storage_info_.files_, user_key, ikey, &storage_info_.level_files_brief_,
       storage_info_.num_non_empty_levels_, &storage_info_.file_indexer_,

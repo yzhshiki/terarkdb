@@ -145,7 +145,7 @@ void GetContext::ReportCounters() {
                get_context_stats_.num_cache_filter_bytes_insert);
   }
 }
-
+// yzh 此时若是正在读SST；传入的value中的fileno是SST的，而非目标Blob的，在transtocombined之后会变成Blob的。但value中的slice已经是读到的sst中的value了，即blobno+offset+size
 bool GetContext::SaveValue(const ParsedInternalKey& parsed_key,
                            LazyBuffer&& value, bool* matched) {
   assert(matched);
@@ -170,7 +170,7 @@ bool GetContext::SaveValue(const ParsedInternalKey& parsed_key,
         *seq_ = parsed_key.sequence;
       }
     }
-
+    // lab1流程的读blob时，走到这里即是kTypeValue；而读SST时，走到这里是kTypeValueIndex
     auto type = parsed_key.type;
     // Key matches. Process it
     if ((type == kTypeValue || type == kTypeMerge || type == kTypeValueIndex ||
@@ -193,8 +193,8 @@ bool GetContext::SaveValue(const ParsedInternalKey& parsed_key,
       return false;
     };
     switch (type) {
-      case kTypeValueIndex:
-        if (separate_helper_ == nullptr) {
+      case kTypeValueIndex: // TODO 这个type应该意味着，在读KV分离后的SST
+        if (separate_helper_ == nullptr) { // TODO yzh 这个情况暂时不理解
           state_ = kFound;
           is_index_ = true;
           if (LIKELY(lazy_val_ != nullptr)) {
@@ -202,16 +202,19 @@ bool GetContext::SaveValue(const ParsedInternalKey& parsed_key,
           }
           return Finish();
         }
+        // 此时value仅有fileno，TransToCombined之后，offset、size、data都已获得。
+        // TODO yzh 貌似原本就在value中，只是做了一个解码工作。
+        // 把offset和size转回成value实际值的操作在哪里？
         value = separate_helper_->TransToCombined(user_key_,
                                                   parsed_key.sequence, value);
         FALLTHROUGH_INTENDED;
       case kTypeValue:
         assert(state_ == kNotFound || state_ == kMerge);
-        if (separate_helper_ == nullptr) {
+        if (separate_helper_ == nullptr) {  // 注意读SST和读Blob前，get_context构造函数传参不同，后者无helper，才会进入此处。
           assert(kNotFound == state_);
           state_ = kFound;
           if (LIKELY(lazy_val_ != nullptr)) {
-            *lazy_val_ = std::move(value);
+            *lazy_val_ = std::move(value);  // 此处lazy_val_中是value handle，而value是真实的value，所以是做替换的那一步。
             lazy_val_->pin(LazyBufferPinLevel::Internal);
           }
           return Finish();
@@ -219,7 +222,7 @@ bool GetContext::SaveValue(const ParsedInternalKey& parsed_key,
         if (kNotFound == state_) {
           state_ = kFound;
           if (LIKELY(lazy_val_ != nullptr)) {
-            OK(std::move(value).dump(*lazy_val_));
+            OK(std::move(value).dump(*lazy_val_)); // 去Blob取真实数据的入口：此处value为SST中的value handle，结束后lazy_val_应为Blob中的真实value
           }
         } else if (kMerge == state_) {
           assert(merge_operator_ != nullptr);

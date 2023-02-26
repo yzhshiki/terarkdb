@@ -79,7 +79,7 @@ struct FileSampledStats {
   // number of user reads to this file.
   mutable std::atomic<uint64_t> num_reads_sampled;
 };
-
+// property就是指footer吧，不是
 struct TablePropertyCache {
   enum {
     kMapHandleRangeDeletions = 1ULL << 0,
@@ -106,7 +106,7 @@ struct TablePropertyCache {
   }
   bool has_snapshots() const { return (flags & kHasSnapshots) != 0; }
 };
-
+// 存在FdWithKeyRange中，包含一个SST的各种元信息
 struct FileMetaData {
   enum : uint8_t {
     // Notice: The highest bit is used for backward compatible

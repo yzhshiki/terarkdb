@@ -410,7 +410,7 @@ Status BlockBasedTableBuilder::Add(const Slice& key,
     uint64_t _fileno = lazy_value.file_number();
     uint64_t _block_offset = lazy_value.block_offset();
     uint64_t _block_size = lazy_value.block_size();
-
+    // lab1加入之前，见else后，value就是Encode的fileno，所以现在格式是对等的。
     const Slice& value_with_handle = EncodeValueHandle(_fileno, _block_offset, _block_size);
     r->data_block.Add(key, value_with_handle);
   } else {

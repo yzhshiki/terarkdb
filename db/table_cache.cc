@@ -433,6 +433,7 @@ InternalIterator* TableCache::NewIterator(
   return result;
 }
 
+// 从table reader中get,即已经确定在这个SST中了。
 Status TableCache::Get(const ReadOptions& options,
                        const FileMetaData& file_meta,
                        const DependenceMap& dependence_map, const Slice& k,
@@ -455,6 +456,7 @@ Status TableCache::Get(const ReadOptions& options,
       return Status::OK();
     }
   }
+  // 通过文件描述符fd获取TableReader，如果fd中不存在TableReader，则需要从文件中读取并进行解析。
   auto& fd = file_meta.fd;
   IterKey key_buffer;
   Status s;
@@ -470,10 +472,12 @@ Status TableCache::Get(const ReadOptions& options,
       t = GetTableReaderFromHandle(handle);
     }
   }
-  if(options.read_handle){
-    s = t->Get(options, k, get_context, prefix_extractor, skip_filters);
-    return s;
-  }
+  // 这里即是跳过blob index block，直接读data block的分岔点。
+  // TODO yzh 有问题，不该在查denpendence map之前。
+  // if(options.read_handle){
+  //   s = t->Get(options, k, get_context, prefix_extractor, skip_filters);
+  //   return s;
+  // }
   if (s.ok()) {
     t->UpdateMaxCoveringTombstoneSeq(options, ExtractUserKey(k),
                                      get_context->max_covering_tombstone_seq());
