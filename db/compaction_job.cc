@@ -1509,6 +1509,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
 
   // Although the v2 aggregator is what the level iterator(s) know about,
   // the AddTombstones calls will be propagated down to the v1 aggregator.
+  // 创建Compaction时，遍历各输入sst的Internal迭代器
   std::unique_ptr<InternalIterator> input(versions_->MakeInputIterator(
       sub_compact->compaction, &range_del_agg, env_options_for_read_));
 
@@ -1668,6 +1669,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
   } else {
     sub_compact->actual_start.SetMinPossibleForUserKey(
         sub_compact->compaction->GetSmallestUserKey());
+    // 每个子iter找到对应SST的第一个键值对，以备归并排序
     input->SeekToFirst();
   }
 
@@ -1685,6 +1687,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     status = Status::OK();
   }
 
+  // 创造compationIter，可用于归并排序的实际数据操作
   sub_compact->c_iter.reset(new CompactionIterator(
       input.get(), &separate_helper, end, cfd->user_comparator(), &merge,
       versions_->LastSequence(), &existing_snapshots_,
@@ -1809,7 +1812,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     }
     assert(sub_compact->builder != nullptr);
     assert(sub_compact->current_output() != nullptr);
-    status = sub_compact->builder->Add(key, value);
+    status = sub_compact->builder->Add(key, value);   // 追加键值对到SST
     if (!status.ok()) {
       break;
     }
@@ -1881,6 +1884,7 @@ void CompactionJob::ProcessKeyValueCompaction(SubcompactionState* sub_compact) {
     // during subcompactions (i.e. if output size, estimated by input size, is
     // going to be 1.2MB and max_output_file_size = 1MB, prefer to have 0.6MB
     // and 0.6MB instead of 1MB and 0.2MB)
+    // 判断是否要启用新的output_sst
     bool output_file_ended = false;
     Status input_status;
     if (sub_compact->compaction->max_output_file_size() != 0 &&

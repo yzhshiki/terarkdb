@@ -334,7 +334,7 @@ void CompactionIterator::SetFilterSampleInterval(size_t sample_interval) {
   assert((sample_interval & (sample_interval - 1)) == 0);  // must be power of 2
   filter_sample_interval_ = sample_interval;
 }
-
+// 这里是做compaction中归并排序淘汰旧版本kv的地方
 void CompactionIterator::NextFromInput() {
   at_next_ = false;
   valid_ = false;
@@ -385,6 +385,7 @@ void CompactionIterator::NextFromInput() {
     // Check whether the user key changed. After this if statement current_key_
     // is a copy of the current input key (maybe converted to a delete by the
     // compaction filter). ikey_.user_key is pointing to the copy.
+    // 疑似判断当前键与上一键是否相同
     if (!has_current_user_key_ ||
         !cmp_->Equal(ikey_.user_key, current_user_key_)) {
       // First occurrence of this user key

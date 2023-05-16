@@ -4703,6 +4703,7 @@ InternalIterator* VersionSet::MakeInputIterator(
   size_t num = 0;
   for (size_t which = 0; which < c->num_input_levels(); which++) {
     if (c->input_levels(which)->num_files != 0) {
+      // L0中每个文件创建一个迭代器
       if (c->level(which) <= 0 || c->input_levels(which)->num_files == 1) {
         const LevelFilesBrief* flevel = c->input_levels(which);
         for (size_t i = 0; i < flevel->num_files; i++) {
@@ -4716,7 +4717,7 @@ InternalIterator* VersionSet::MakeInputIterator(
               false /* skip_filters */, c->level(which) /* level */);
         }
       } else {
-        // Create concatenating iterator for the files from this level
+        // Create concatenating iterator for the files from this level 一整层一个迭代器
         list[num++] = new LevelIterator(
             cfd->table_cache(), read_options, env_options_compactions,
             cfd->internal_comparator(), c->input_levels(which), dependence_map,
@@ -4729,6 +4730,8 @@ InternalIterator* VersionSet::MakeInputIterator(
     }
   }
   assert(num <= space);
+  // 将list中的Iterator合并成一个Merging Iterator，MergingIterator只能对文件进行遍历。
+  // 而CompactionIterator从MergingIterator中获取数据，并进行处理，例如新旧数据的合并，同一个key只保留新的，又例如数据的删除。
   InternalIterator* result =
       NewMergingIterator(&c->column_family_data()->internal_comparator(), list,
                          static_cast<int>(num));
