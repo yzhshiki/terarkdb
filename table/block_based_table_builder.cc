@@ -404,10 +404,27 @@ Status BlockBasedTableBuilder::Add(const Slice& key,
     return Status::Corruption("BlockBasedTableBuilder::Add: overlapping key");
   }
 
+  r->last_key.assign(key.data(), key.size());
+  if (lazy_value.file_number() != uint64_t(-1)) {
+    // TODO : First Value handle's offset and size are -1
+    uint64_t _fileno = lazy_value.file_number();
+    uint64_t _block_offset = lazy_value.block_offset();
+    uint64_t _block_size = lazy_value.block_size();
+    // lab1加入之前，见else后，value就是Encode的fileno，所以现在格式是对等的。
+    const Slice& value_with_handle = EncodeValueHandle(_fileno, _block_offset, _block_size);
+    r->data_block.Add(key, value_with_handle);
+  } else {
+    r->data_block.Add(key, value);
+  }
+
   auto should_flush = r->flush_block_policy->Update(key, value);
-  if (should_flush) {
+  if (should_flush || lazy_value.should_flush()) {
     assert(!r->data_block.empty());
     Flush();
+    // if (lazy_value.should_flush()) {
+      lazy_value.set_block_handle(r->pending_handle.offset(),
+                                  r->pending_handle.size());
+    // }
 
     // Add item to index block.
     // We do not emit the index entry for a block until we have seen the first
@@ -427,8 +444,6 @@ Status BlockBasedTableBuilder::Add(const Slice& key,
     r->filter_builder->Add(ExtractUserKey(key));
   }
 
-  r->last_key.assign(key.data(), key.size());
-  r->data_block.Add(key, value);
   r->props.num_entries++;
   r->props.raw_key_size += key.size();
   r->props.raw_value_size += value.size();

@@ -61,7 +61,7 @@ typedef std::vector<std::pair<std::string, std::string>> KVPairBlock;
 
 // A Table is a sorted map from strings to strings.  Tables are
 // immutable and persistent.  A Table may be safely accessed from
-// multiple threads without external synchronization.
+// multiple threads without external synchronization. BlockBasedTable就是TableReader的子类/实现
 class BlockBasedTable : public TableReader {
  public:
   static const std::string kFilterBlockPrefix;
@@ -434,7 +434,7 @@ struct BlockBasedTable::CachableEntry {
   // if the entry is from the cache, cache_handle will be populated.
   Cache::Handle* cache_handle = nullptr;
 };
-
+// yzh 封装了SST的元信息
 struct BlockBasedTable::Rep {
   Rep(const ImmutableCFOptions& _ioptions, const EnvOptions& _env_options,
       const BlockBasedTableOptions& _table_opt,
@@ -461,7 +461,7 @@ struct BlockBasedTable::Rep {
   const FilterPolicy* const filter_policy;
   const InternalKeyComparator& internal_comparator;
   Status status;
-  std::unique_ptr<RandomAccessFileReader> file;
+  std::unique_ptr<RandomAccessFileReader> file;   // 封装磁盘文件
   char cache_key_prefix[kMaxCacheKeyPrefixSize];
   size_t cache_key_prefix_size = 0;
   char persistent_cache_key_prefix[kMaxCacheKeyPrefixSize];
@@ -487,7 +487,7 @@ struct BlockBasedTable::Rep {
     kPartitionedFilter,
   };
   FilterType filter_type;
-  BlockHandle filter_handle;
+  BlockHandle filter_handle;  // filter block的位置
 
   std::shared_ptr<const TableProperties> table_properties;
   TablePropertiesBase table_properties_base;

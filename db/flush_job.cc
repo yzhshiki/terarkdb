@@ -291,7 +291,7 @@ void FlushJob::Cancel(const Status& s) {
   assert(base_ != nullptr);
   base_->Unref();
 }
-
+// 将 FlushJob 中挑选出来的所有 MemTable 进行 Merge 然后构造SSTable 并写到 L0
 Status FlushJob::WriteLevel0Table() {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_FLUSH_WRITE_L0);
@@ -312,7 +312,7 @@ Status FlushJob::WriteLevel0Table() {
     Arena arena;
     uint64_t total_num_entries = 0, total_num_deletes = 0;
     size_t total_memory_usage = 0;
-    for (MemTable* m : mems_) {
+    for (MemTable* m : mems_) { // 遍历所有memtable，并取得每个memtable的iterator
       ROCKS_LOG_INFO(
           db_options_.info_log,
           "[%s] [JOB %d] Flushing memtable with next log file: %" PRIu64 "\n",
@@ -431,7 +431,7 @@ Status FlushJob::WriteLevel0Table() {
     // insert files directly into higher levels because some other
     // threads could be concurrently producing compacted files for
     // that key range.
-    // Add file to L0
+    // Add file to L0 将生成的文件添加到L0（通过VersionEdit类），说明此前刷盘已完成了
     for (size_t i = 0; i < meta_.size(); ++i) {
       auto& f = meta_[i];
       edit_->AddFile(i == 0 ? 0 : -1, f.fd.GetNumber(), f.fd.GetPathId(),

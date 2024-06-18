@@ -117,6 +117,8 @@ extern char* EncodeVarint64(char* dst, uint64_t value);
 // Lower-level versions of Get... that read directly from a character buffer
 // without any bounds checking.
 
+extern Slice EncodeValueHandle(uint64_t& number, uint64_t& offset, uint64_t& size);
+extern void DecodeValueHandle(const Slice& slice, uint64_t& number, uint64_t& offset, uint64_t& size);
 inline uint16_t DecodeFixed16(const char* ptr) {
   if (port::kLittleEndian) {
     // Load the raw bytes
@@ -427,6 +429,30 @@ inline Slice GetSliceUntil(Slice* slice, char delimiter) {
   slice->remove_prefix(len + ((len < slice->size()) ? 1 : 0));
   return ret;
 }
+
+inline Slice EncodeValueHandle(uint64_t& number, uint64_t& offset, uint64_t& size) {
+    if (!port::kLittleEndian) {
+      number = EndianTransform(number, sizeof number);
+    }
+    if (!port::kLittleEndian) {
+      offset = EndianTransform(offset, sizeof offset);
+    }
+    if (!port::kLittleEndian) {
+      size = EndianTransform(size, sizeof size);
+    }
+    static thread_local char handle[64];
+    EncodeFixed64(handle, number);
+    EncodeFixed64(handle + 8 , offset);
+    EncodeFixed64(handle + 16 , size);
+    return Slice(handle, 24);
+  }
+
+inline void DecodeValueHandle(const Slice& slice, uint64_t& number, uint64_t& offset, uint64_t& size) {
+    number = DecodeFixed64(slice.data());
+    offset = DecodeFixed64(slice.data() + 8);
+    size = DecodeFixed64(slice.data() + 16);
+  }
+
 
 template <class T>
 #ifdef ROCKSDB_UBSAN_RUN

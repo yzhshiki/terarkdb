@@ -197,19 +197,31 @@ void IterKey::EnlargeBuffer(size_t key_size) {
   buf_ = new char[key_size];
   buf_size_ = key_size;
 }
-
+// TODO wangyi.ywq@bytedance.com
+// how to implement decode metedata
+// TODO yzh 这里的TransToSeparate是做实际的value修改工作的地方。
 Status SeparateHelper::TransToSeparate(
     const Slice& internal_key, LazyBuffer& value, uint64_t file_number,
-    const Slice& meta, bool is_merge, bool is_index,
-    const ValueExtractor* value_meta_extractor) {
+    uint64_t block_offset, uint64_t block_size, const Slice& meta,
+    bool is_merge, bool is_index, const ValueExtractor* value_meta_extractor) {
   assert(file_number != uint64_t(-1));
+//   no need to judge offset and size now. we may not do flush before here.
+//   assert(block_offset != uint64_t(-1));
+//   assert(block_size != uint64_t(-1));
+// 此处先把fileno等字符编码，然后写给value
   if (value_meta_extractor == nullptr || is_merge) {
-    value.reset(EncodeFileNumber(file_number), true, file_number);
+    value.reset(EncodeFileNumber(file_number), EncodeUint64(block_offset), EncodeUint64(block_size), 
+                true, file_number, block_offset, block_size);
     return Status::OK();
   }
+  // TODO yzh 这里干啥的，貌似fill, read没用到，可能是因为关了compaction
   if (is_index) {
-    Slice parts[] = {EncodeFileNumber(file_number), meta};
-    value.reset(SliceParts(parts, 2), file_number);
+    // (TODO) yangzhehua : should encode these three into one, like EncodeValueHandle
+    Slice parts[] = {EncodeFileNumber(file_number),
+                     EncodeFileNumber(block_offset),
+                     EncodeFileNumber(block_size), meta};
+    // 
+    value.reset(SliceParts(parts, 4), file_number, block_offset, block_size);
     return Status::OK();
   } else {
     auto s = value.fetch();
@@ -220,8 +232,10 @@ Status SeparateHelper::TransToSeparate(
     s = value_meta_extractor->Extract(ExtractUserKey(internal_key),
                                       value.slice(), &value_meta);
     if (s.ok()) {
-      Slice parts[] = {EncodeFileNumber(file_number), value_meta};
-      value.reset(SliceParts(parts, 2), file_number);
+      Slice parts[] = {EncodeFileNumber(file_number),
+                       EncodeFileNumber(block_offset),
+                       EncodeFileNumber(block_size), meta};
+      value.reset(SliceParts(parts, 4), file_number, block_offset, block_size);
     }
     return s;
   }

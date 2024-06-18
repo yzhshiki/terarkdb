@@ -40,7 +40,7 @@ extern bool ShouldReportDetailedTime(Env* env, Statistics* stats);
 const int kMagicNumberLengthByte = 8;
 
 // BlockHandle is a pointer to the extent of a file that stores a data
-// block or a meta block.
+// block or a meta block. 存储一个block的offset和size，相当于其指针
 class BlockHandle {
  public:
   BlockHandle();

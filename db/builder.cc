@@ -42,6 +42,8 @@ namespace TERARKDB_NAMESPACE {
 
 class TableFactory;
 
+// 用于创建TableBuilder对象，file参数是用于写入SST文件的
+// 主要用于WriteLevel0Table时，创建一个TableBUilder来将Memtable刷盘
 TableBuilder* NewTableBuilder(
     const ImmutableCFOptions& ioptions, const MutableCFOptions& moptions,
     const InternalKeyComparator& internal_comparator,
@@ -65,6 +67,12 @@ TableBuilder* NewTableBuilder(
       column_family_id, file);
 }
 
+// TableBuilder类的方法，将分块数据构建成SST并写入硬盘。
+// 被WriteLevel0Table调用来刷盘。
+// 1. 合并已经写入的块，十七满足内部索引和数据块的大小限制
+// 2. 为数据块和索引块构建元信息
+// 3. 将内部索引和数据块写入文件，并将元信息写入文件
+// 4. 对写入的信息进行checksum和压缩，并写入文件。
 Status BuildTable(
     const std::string& dbname, VersionSet* versions_, Env* env,
     const ImmutableCFOptions& ioptions,
@@ -128,7 +136,7 @@ Status BuildTable(
 #ifndef NDEBUG
       bool use_direct_writes = env_options.use_direct_writes;
       TEST_SYNC_POINT_CALLBACK("BuildTable:create_file", &use_direct_writes);
-#endif  // !NDEBUG
+#endif  // !NDEBUG 创建新文件，即新的SST
       s = NewWritableFile(env, fname, &file, env_options);
       if (!s.ok()) {
         EventHelpers::LogAndNotifyTableFileCreationFinished(
@@ -169,12 +177,14 @@ Status BuildTable(
       Status (*trans_to_separate_callback)(void* args, const Slice& key,
                                            LazyBuffer& value) = nullptr;
       void* trans_to_separate_callback_args = nullptr;
-
+      
+      // 用于KV分离，将value替换成value handle，改动此处以添加offset和size
       Status TransToSeparate(const Slice& internal_key, LazyBuffer& value,
                              const Slice& meta, bool is_merge,
                              bool is_index) override {
         return SeparateHelper::TransToSeparate(
-            internal_key, value, value.file_number(), meta, is_merge, is_index,
+            internal_key, value, value.file_number(), value.block_offset(),
+            value.block_size(), meta, is_merge, is_index,
             value_meta_extractor.get());
       }
 
@@ -233,9 +243,12 @@ Status BuildTable(
 
     size_t target_blob_file_size = MaxBlobSize(
         mutable_cf_options, ioptions.num_levels, ioptions.compaction_style);
-
+    
+    // KV分离实际过程，作为callback函数使用 
     auto trans_to_separate = [&](const Slice& key, LazyBuffer& value) {
       assert(value.file_number() == uint64_t(-1));
+      assert(value.block_offset() == uint64_t(-1));
+      assert(value.block_size() == uint64_t(-1));
       Status status;
       TableBuilder* blob_builder = separate_helper.builder.get();
       FileMetaData* blob_meta = separate_helper.current_output;
@@ -287,14 +300,18 @@ Status BuildTable(
         blob_builder = separate_helper.builder.get();
       }
       if (status.ok()) {
-        status = blob_builder->Add(key, value);
+        // 此处是将真实kv放进blob
+        // value.set_should_flush(true);
+          status = blob_builder->Add(key, value);
       }
       if (status.ok()) {
         blob_meta->UpdateBoundaries(key, GetInternalKeySeqno(key));
+        // 这里应该只是改动value，插入SST是在callback结束后
+        // 调用dbformat.cc中的SeparateHelper::TransToSeparate执行实际的工作
         status = SeparateHelper::TransToSeparate(
-            key, value, blob_meta->fd.GetNumber(), Slice(),
-            GetInternalKeyType(key) == kTypeMerge, false,
-            separate_helper.value_meta_extractor.get());
+            key, value, blob_meta->fd.GetNumber(), value.block_offset(),
+            value.block_size(), Slice(), GetInternalKeyType(key) == kTypeMerge,
+            false, separate_helper.value_meta_extractor.get());
       }
       return status;
     };
@@ -310,6 +327,7 @@ Status BuildTable(
       separate_helper.trans_to_separate_callback_args = &trans_to_separate;
     }
 
+    // c_iter指向键值对
     CompactionIterator c_iter(
         iter.get(), &separate_helper, nullptr,
         internal_comparator.user_comparator(), &merge, kMaxSequenceNumber,
@@ -363,9 +381,9 @@ Status BuildTable(
         ioptions.merge_operator->IsStableMerge()) {
       builder->SetSecondPassIterator(second_pass_iter.get());
     }
-    c_iter.SeekToFirst();
+    c_iter.SeekToFirst(); // Next中调用transtoseparate，写Blob（也是用builder->Add）并替换value为value_handle。
     for (; s.ok() && c_iter.Valid(); c_iter.Next()) {
-      s = builder->Add(c_iter.key(), c_iter.value());
+      s = builder->Add(c_iter.key(), c_iter.value()); // 写value_handle到SST。
       sst_meta()->UpdateBoundaries(c_iter.key(), c_iter.ikey().sequence);
 
       // TODO(noetzli): Update stats after flush, too.
@@ -453,7 +471,7 @@ Status BuildTable(
       // No matter whether use_direct_io_for_flush_and_compaction is true,
       // we will regrad this verification as user reads since the goal is
       // to cache it here for further user reads
-      ReadOptions ro;
+        ReadOptions ro;
       ro.fill_cache = false;
       for (auto& meta : *meta_vec) {
         std::unique_ptr<InternalIterator> it(table_cache->NewIterator(

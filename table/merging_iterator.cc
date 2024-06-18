@@ -100,7 +100,7 @@ class MergingIterator : public InternalIterator {
       child.SeekToFirst();
       if (child.Valid()) {
         assert(child.status().ok());
-        minHeap_.push(&child);
+        minHeap_.push(&child);  // 把各个子iter放进最小堆。
       } else {
         considerStatus(child.status());
       }

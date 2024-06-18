@@ -37,7 +37,7 @@ struct GetContextStats {
   uint64_t num_cache_filter_add = 0;
   uint64_t num_cache_filter_bytes_insert = 0;
 };
-
+// 维护查找过程的上下文，各级别查找返回后通过此类做判断
 class GetContext {
  public:
   enum GetState {
@@ -69,6 +69,15 @@ class GetContext {
   bool SaveValue(const ParsedInternalKey& parsed_key, LazyBuffer&& value,
                  bool* matched);
 
+  void SaveBlockHandle(uint64_t block_offset, uint64_t block_size) {
+    value_handle_.set_offset(block_offset);
+    value_handle_.set_size(block_size);
+  };
+  BlockHandle GetBlockHandle(){
+    SaveBlockHandle(lazy_val_->block_offset(), lazy_val_->block_size());
+    return value_handle_;
+  }
+
   GetState State() const { return state_; }
   Status&& CorruptReason() && { return std::move(corrupt_); }
 
@@ -98,6 +107,8 @@ class GetContext {
     return true;
   }
 
+  bool HasSeparateHelper() const { return separate_helper_ != nullptr; }
+
   void ReportCounters();
 
  private:
@@ -122,6 +133,9 @@ class GetContext {
   // For Merge, don't accept key while seq type less than min_seq_type
   uint64_t min_seq_type_;
   ReadCallback* callback_;
+
+  BlockHandle value_handle_;
+
   bool sample_;
   bool is_index_;
   bool is_finished_;

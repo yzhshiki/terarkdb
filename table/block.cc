@@ -209,7 +209,7 @@ void DataBlockIter::Seek(const Slice& target) {
   if (data_ == nullptr) {  // Not init yet
     return;
   }
-  uint32_t index = 0;
+  uint32_t index = 0; // 在data block里的restart point中作二分
   bool ok = BinarySeek<DecodeKey>(seek_key, 0, num_restarts_ - 1, &index,
                                   comparator_);
 

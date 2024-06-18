@@ -2400,7 +2400,7 @@ bool BlockBasedTable::FullFilterKeyMayMatch(
   }
   return may_match;
 }
-
+// TODO yzh 具体是怎样用filter、index并最终取得指定data block的
 Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
                             GetContext* get_context,
                             const SliceTransform* prefix_extractor,
@@ -2417,7 +2417,7 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
   FilterBlockReader* filter = filter_entry.value;
 
   // First check the full filter
-  // If full filter not useful, Then go into each block
+  // If full filter not useful, Then go into each block 用filter block进行过滤判断
   if (!FullFilterKeyMayMatch(read_options, filter, key, no_io,
                              prefix_extractor)) {
     RecordTick(rep_->ioptions.statistics, BLOOM_FILTER_USEFUL);
@@ -2431,66 +2431,18 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
       need_upper_bound_check = PrefixExtractorChanged(
           &rep_->table_properties_base, prefix_extractor);
     }
-    auto iiter =
-        NewIndexIterator(read_options, need_upper_bound_check, &iiter_on_stack,
-                         /* index_entry */ nullptr, get_context);
-    std::unique_ptr<InternalIteratorBase<BlockHandle>> iiter_unique_ptr;
-    if (iiter != &iiter_on_stack) {
-      iiter_unique_ptr.reset(iiter);
-    }
 
     bool matched = false;  // if such user key mathced a key in SST
     bool done = false;
-    for (iiter->Seek(key); iiter->Valid() && !done; iiter->Next()) {
-      BlockHandle handle = iiter->value();
 
-      bool not_exist_in_filter =
-          filter != nullptr && filter->IsBlockBased() == true &&
-          !filter->KeyMayMatch(ExtractUserKey(key), prefix_extractor,
-                               handle.offset(), no_io);
-
-      if (not_exist_in_filter) {
-        // Not found
-        // TODO: think about interaction with Merge. If a user key cannot
-        // cross one data block, we should be fine.
-        RecordTick(rep_->ioptions.statistics, BLOOM_FILTER_USEFUL);
-        PERF_COUNTER_BY_LEVEL_ADD(bloom_filter_useful, 1, rep_->level);
-        break;
-      } else {
-        DataBlockIter biter;
-        NewDataBlockIterator<DataBlockIter>(
-            rep_, read_options, iiter->value(), &biter, false,
-            true /* key_includes_seq */, get_context);
-
-        if (read_options.read_tier == kBlockCacheTier &&
-            biter.status().IsIncomplete()) {
-          // couldn't get block from block_cache
-          // Update Saver.state to Found because we are only looking for
-          // whether we can guarantee the key is not there when "no_io" is set
-          get_context->MarkKeyMayExist();
-          break;
-        }
-        if (!biter.status().ok()) {
-          s = biter.status();
-          break;
-        }
-
-        bool may_exist = biter.SeekForGet(key);
-        if (!may_exist) {
-          // HashSeek cannot find the key this block and the the iter is not
-          // the end of the block, i.e. cannot be in the following blocks
-          // either. In this case, the seek_key cannot be found, so we break
-          // from the top level for-loop.
-          break;
-        }
-
-        class LazyBufferStateImpl : public LazyBufferState {
+    class LazyBufferStateImpl : public LazyBufferState {
          public:
           virtual void destroy(LazyBuffer* /*buffer*/) const override {}
 
           virtual Status pin_buffer(LazyBuffer* buffer) const override {
             if (buffer->size() <= sizeof(LazyBufferContext)) {
-              buffer->reset(buffer->slice(), true, buffer->file_number());
+              buffer->reset(buffer->slice(), true, buffer->file_number(),
+                            buffer->block_offset(), buffer->block_size());
               return Status::OK();
             }
             auto context = get_context(buffer);
@@ -2502,7 +2454,7 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
               return Status::NotSupported();
             }
             buffer->reset(buffer->slice(), std::move(release_cached_entry),
-                          buffer->file_number());
+                          buffer->file_number(), buffer->block_offset(), buffer->block_size());
             return Status::OK();
           }
 
@@ -2512,37 +2464,140 @@ Status BlockBasedTable::Get(const ReadOptions& read_options, const Slice& key,
         };
         static LazyBufferStateImpl static_state;
 
-        // Call the *saver function on each entry/block until it returns false
-        for (; biter.Valid(); biter.Next()) {
-          ParsedInternalKey parsed_key;
-          if (!ParseInternalKey(biter.key(), &parsed_key)) {
-            s = Status::Corruption(Slice());
-          }
 
-          if (!get_context->SaveValue(
-                  parsed_key,
-                  LazyBuffer(&static_state,
-                             {reinterpret_cast<uint64_t>(&biter)},
-                             biter.value(), rep_->file_number),
-                  &matched)) {
-            done = true;
-            break;
-          }
-        }
-        s = biter.status();
-      }
-      if (done) {
-        // Avoid the extra Next which is expensive in two-level indexes
+    // if we've got fileno and block_handle,  try to skip the index block // 因为这段代码是SST和Blob共用的，下面循环是Lab1做出的优化，在Blob中使用的体现。
+    while (!get_context->HasSeparateHelper()) {
+        // -1 means the former blob 
+        if (get_context->GetBlockHandle().offset() != uint64_t(-1)) { // TODO yzh 如果失效了，要手动置-1吗？在fetch_buffer时置-1，就在调用此函数前
+            BlockHandle handle = get_context->GetBlockHandle(); 
+            DataBlockIter biter;
+            NewDataBlockIterator<DataBlockIter>(rep_, read_options, handle, &biter,
+                                                false, true /* key_includes_seq */,
+                                                get_context);
+            if (read_options.read_tier == kBlockCacheTier &&
+                biter.status().IsIncomplete()) {
+                    get_context->MarkKeyMayExist();
+                    break;
+                }
+                if (!biter.status().ok()) {
+                    s = biter.status();
+                    break;
+                }
+                // TODO yzh 此处应该不需要了，因为已持有offset
+                bool may_exist = biter.SeekForGet(key);
+                if (!may_exist) {
+                    break;
+                }
+
+                for (; biter.Valid(); biter.Next()) {
+                    ParsedInternalKey parsed_key;
+                    if (!ParseInternalKey(biter.key(), &parsed_key)) {
+                        s = Status::Corruption(Slice());
+                    }
+
+                    if (!get_context->SaveValue(
+                            parsed_key,
+                            LazyBuffer(&static_state,
+                                        {reinterpret_cast<uint64_t>(&biter)},
+                                        biter.value(), rep_->file_number,
+                                        handle.offset(), handle.size()),
+                            &matched)) {
+                        done = true;
+                        break;
+                    }
+                }
+                s = biter.status();
+            }
         break;
-      }
+    }
+    if (!done) {
+        auto iiter =
+            NewIndexIterator(read_options, need_upper_bound_check, &iiter_on_stack,
+                            /* index_entry */ nullptr, get_context);
+        std::unique_ptr<InternalIteratorBase<BlockHandle>> iiter_unique_ptr;
+        if (iiter != &iiter_on_stack) {
+          iiter_unique_ptr.reset(iiter);
+        }
+        // 查询index block，iiter->Seek中就用了二分来找到data block
+        for (iiter->Seek(key); iiter->Valid() && !done; iiter->Next()) {
+            BlockHandle handle = iiter->value();
+            // TODO yzh 这里是必要的吗？还未确定此block要读，不过大概率了。
+            if(read_options.read_handle) {
+                get_context->SaveBlockHandle(handle.offset(), handle.size());
+            }
+            // 看起来有两层filter，一层是对整个SST的，一层是对Block的
+            bool not_exist_in_filter =
+                filter != nullptr && filter->IsBlockBased() == true &&
+                !filter->KeyMayMatch(ExtractUserKey(key), prefix_extractor,
+                                    handle.offset(), no_io);
+
+            if (not_exist_in_filter) {
+                // Not found
+                // TODO: think about interaction with Merge. If a user key cannot
+                // cross one data block, we should be fine.
+                RecordTick(rep_->ioptions.statistics, BLOOM_FILTER_USEFUL);
+                PERF_COUNTER_BY_LEVEL_ADD(bloom_filter_useful, 1, rep_->level);
+                break;
+            } else {
+                DataBlockIter biter;  //通过了指定data block的filter检测，正式去取data block
+                NewDataBlockIterator<DataBlockIter>(
+                    rep_, read_options, iiter->value(), &biter, false,
+                    true /* key_includes_seq */, get_context);
+
+                if (read_options.read_tier == kBlockCacheTier &&
+                    biter.status().IsIncomplete()) {
+                    // couldn't get block from block_cache
+                    // Update Saver.state to Found because we are only looking for
+                    // whether we can guarantee the key is not there when "no_io" is set
+                    get_context->MarkKeyMayExist();
+                    break;
+                }
+                if (!biter.status().ok()) {
+                    s = biter.status();
+                    break;
+                }
+                // 下面是在data block中给biter用二分找到合适的restart point，来作为查询起点
+                bool may_exist = biter.SeekForGet(key);
+                if (!may_exist) { //
+                    // HashSeek cannot find the key this block and the the iter is not
+                    // the end of the block, i.e. cannot be in the following blocks
+                    // either. In this case, the seek_key cannot be found, so we break
+                    // from the top level for-loop.
+                    break;
+                }
+                // 在data block内部遍历
+                // Call the *saver function on each entry/block until it returns false
+                for (; biter.Valid(); biter.Next()) {
+                    ParsedInternalKey parsed_key;
+                    if (!ParseInternalKey(biter.key(), &parsed_key)) {
+                        s = Status::Corruption(Slice());
+                    }
+
+                    if (!get_context->SaveValue(
+                            parsed_key,
+                            LazyBuffer(&static_state,
+                                        {reinterpret_cast<uint64_t>(&biter)},
+                                        biter.value(), rep_->file_number),
+                            &matched)) {
+                        done = true;
+                        break;
+                    }
+                }
+                s = biter.status();
+            }
+            if (done) {
+                // Avoid the extra Next which is expensive in two-level indexes
+                break;
+            }
+        }
+        if (s.ok()) {
+            s = iiter->status();
+        }
     }
     if (matched && filter != nullptr && !filter->IsBlockBased()) {
       RecordTick(rep_->ioptions.statistics, BLOOM_FILTER_FULL_TRUE_POSITIVE);
       PERF_COUNTER_BY_LEVEL_ADD(bloom_filter_full_true_positive, 1,
                                 rep_->level);
-    }
-    if (s.ok()) {
-      s = iiter->status();
     }
   }
 
@@ -3271,7 +3326,8 @@ void DeleteCachedIndexEntry(const Slice& /*key*/, void* value) {
 Status BlockBasedTableIterator<DataBlockIter, LazyBuffer>::pin_buffer(
     LazyBuffer* buffer) const {
   if (block_iter_.value().size() <= sizeof(LazyBufferContext)) {
-    buffer->reset(block_iter_.value(), true, buffer->file_number());
+    buffer->reset(block_iter_.value(), true, buffer->file_number(),
+                    buffer->block_offset(), buffer->block_size());
     return Status::OK();
   }
   Cleanable release_cached_entry = block_iter_.RefCache();
@@ -3279,7 +3335,7 @@ Status BlockBasedTableIterator<DataBlockIter, LazyBuffer>::pin_buffer(
     return Status::NotSupported();
   }
   buffer->reset(block_iter_.value(), std::move(release_cached_entry),
-                buffer->file_number());
+                buffer->file_number(), buffer->block_offset(), buffer->block_size());
   return Status::OK();
 }
 

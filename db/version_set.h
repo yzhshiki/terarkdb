@@ -91,7 +91,7 @@ extern bool SomeFileOverlapsRange(const InternalKeyComparator& icmp,
 extern void DoGenerateLevelFilesBrief(LevelFilesBrief* file_level,
                                       const std::vector<FileMetaData*>& files,
                                       Arena* arena);
-
+// 关于SST与Blob的各种元信息都在这
 class VersionStorageInfo {
  public:
   VersionStorageInfo(const InternalKeyComparator* internal_comparator,

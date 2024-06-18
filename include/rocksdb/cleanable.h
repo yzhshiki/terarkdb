@@ -61,6 +61,8 @@ class Cleanable {
     CleanupFunction function;
     void* arg1;
     void* arg2;
+    void* arg3;
+    void* arg4;
     Cleanup* next;
   };
   Cleanup cleanup_;
